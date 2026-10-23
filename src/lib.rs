@@ -121,20 +121,6 @@ fn flash_profit(p: &Curve, q: &Curve, x: u64) -> i128 {
     run().unwrap_or(i128::MIN)
 }
 
-/// Binary search for the profit-maximising size in [1, max_in] (profit is concave in size).
-fn best_size(p: &Curve, q: &Curve, max_in: u64) -> (u64, i128) {
-    let (mut lo, mut hi) = (1u64, max_in.max(1));
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        if flash_profit(p, q, mid) < flash_profit(p, q, mid + 1) {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    (lo, flash_profit(p, q, lo))
-}
-
 // ---------------------------------------------------------------- program
 
 #[program]
@@ -225,20 +211,21 @@ pub mod stable_arb {
     }
 
     /// Zero-capital atomic arbitrage between two pools of the same pair.
-    /// Finds the best direction and size (up to `max_in`) on-chain, executes it as a
-    /// flash route and reverts unless the caller nets at least `min_profit` of token A.
-    pub fn arb(ctx: Context<Arb>, max_in: u64, min_profit: u64) -> Result<()> {
+    /// Tries both directions at `size` (the best size is found off-chain), runs the
+    /// better one as a flash route and reverts unless the caller nets >= `min_profit` of token A.
+    pub fn arb(ctx: Context<Arb>, size: u64, min_profit: u64) -> Result<()> {
         let a = &ctx.accounts;
         require!(a.pool_x.key() != a.pool_y.key(), ArbError::BadParams);
         require!(a.pool_x.mint_a == a.pool_y.mint_a && a.pool_x.mint_b == a.pool_y.mint_b, ArbError::BadParams);
+        require!(size > 0, ArbError::BadParams);
         let cx = Curve::new(&a.pool_x, a.x_a.amount, a.x_b.amount).ok_or(ArbError::Math)?;
         let cy = Curve::new(&a.pool_y, a.y_a.amount, a.y_b.amount).ok_or(ArbError::Math)?;
 
-        // Direction: probe both with a small trade; the cheaper-B pool is the one we buy from.
-        let probe = max_in.min(10_000_000).max(1);
-        let x_first = flash_profit(&cx, &cy, probe) >= flash_profit(&cy, &cx, probe);
+        // Direction: whichever pool sells B cheaper (per the curves) is the one we buy from.
+        let (px, py) = (flash_profit(&cx, &cy, size), flash_profit(&cy, &cx, size));
+        let x_first = px >= py;
         let (p, q) = if x_first { (&cx, &cy) } else { (&cy, &cx) };
-        let (size, profit) = best_size(p, q, max_in);
+        let profit = px.max(py);
         require!(profit > 0 && profit >= min_profit.max(1) as i128, ArbError::NoArb);
         let m = p.out(true, size).ok_or(ArbError::Math)?; // B pulled out of P
         let y = q.out(false, m).ok_or(ArbError::Math)?; // A received from Q
