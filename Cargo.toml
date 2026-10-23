@@ -1,0 +1,44 @@
+# Every agent program's manifest: a workspace of one crate at the root of the
+# program's folder, so the folder as published is what solana-verify rebuilds.
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89.0"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "app"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+[dependencies]
+anchor-lang = { version = "=1.2.0", features = ["init-if-needed"] }
+anchor-spl = "=1.2.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+
+[workspace]
+
+# solana-verify picks its build image by this version, which is the image the
+# program was built in.
+[workspace.metadata.cli]
+solana = "4.1.2"
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+[profile.release.build-override]
+opt-level = 3
+incremental = false
+codegen-units = 1
